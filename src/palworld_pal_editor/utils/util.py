@@ -2,7 +2,7 @@ from pathlib import Path
 import re
 from functools import wraps
 import sys
-from typing import Callable, Optional, get_type_hints, Union, _GenericAlias
+from typing import Callable, Optional, Union, get_type_hints, _GenericAlias
 import socket
 
 from palworld_pal_editor.utils import LOGGER
@@ -13,8 +13,46 @@ def reply(status, data=None, msg=None):
     return jsonify({"status": status, "data": data, "msg": msg})
 
 
+def is_pal_save_dir(path: Optional[Union[str, Path]]) -> bool:
+    if path is None:
+        return False
+
+    current_path = Path(path).expanduser()
+    if not current_path.exists() or not current_path.is_dir():
+        return False
+
+    return (current_path / "Level.sav").exists()
+
+
+def resolve_pal_save_path(path: Optional[Union[str, Path]]) -> Optional[Path]:
+    if path is None:
+        return None
+
+    current_path = Path(path).expanduser()
+    if not current_path.exists():
+        return None
+
+    if current_path.is_file():
+        if current_path.name == "Level.sav":
+            return current_path.parent.resolve()
+        return None
+
+    if is_pal_save_dir(current_path):
+        return current_path.resolve()
+
+    candidates = [
+        candidate.resolve()
+        for candidate in current_path.rglob("*")
+        if candidate.is_dir() and is_pal_save_dir(candidate)
+    ]
+    if candidates:
+        return sorted(candidates, key=lambda candidate: (len(candidate.parts), str(candidate)))[0]
+
+    return current_path.resolve()
+
+
 def get_path_context(path: Path) -> dict:
-    current_path = path.resolve()        
+    current_path = path.resolve()
     children = {
         str(child.resolve()): {
             "filename": child.name,
@@ -23,8 +61,7 @@ def get_path_context(path: Path) -> dict:
         for child in sorted(current_path.iterdir(), key=lambda x: (x.is_file(), x.name))
     }
 
-    names = [child.name for child in current_path.iterdir()]
-    is_pal_dir = "Level.sav" in names and "Players" in names
+    is_pal_dir = is_pal_save_dir(current_path)
 
     return {
         "currentPath": str(current_path),

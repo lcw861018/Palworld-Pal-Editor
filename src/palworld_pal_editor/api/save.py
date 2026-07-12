@@ -15,7 +15,11 @@ from palworld_pal_editor.config import (
 )
 from palworld_pal_editor.core import SaveManager
 from palworld_pal_editor.utils import LOGGER, DataProvider
-from palworld_pal_editor.utils.util import get_path_context, reply
+from palworld_pal_editor.utils.util import (
+    get_path_context,
+    reply,
+    resolve_pal_save_path,
+)
 
 save_blueprint = Blueprint("save", __name__)
 
@@ -40,10 +44,10 @@ def fetch_config():
 @jwt_required()
 def load():
     path = request.json.get("ReadPath", None)
-    path = path or Config.path
+    path = resolve_pal_save_path(path) or resolve_pal_save_path(Config.path)
     try:
-        if path and SaveManager().open(path):
-            Config.path = path
+        if path and SaveManager().open(str(path)):
+            Config.path = str(path)
             Config.save_to_file(PROGRAM_PATH / "config.json")
             return reply(0)
     except Exception as e:
@@ -61,9 +65,9 @@ def load():
 @save_blueprint.route("/save", methods=["POST"])
 @jwt_required()
 def save():
-    path = request.json.get("WritePath", None)
+    path = resolve_pal_save_path(request.json.get("WritePath", None))
     try:
-        if SaveManager().save(path):
+        if SaveManager().save(str(path) if path else None):
             return reply(0)
         return reply(1, msg=f"Path not available? {path}")
     except Exception as e:
@@ -191,17 +195,20 @@ def get_tech_data():
 @jwt_required()
 def get_path():
     try:
-        current_path = Path(Config.path).resolve()
-        if not current_path.exists():
-            raise Exception(f"Path {current_path} not exist.")
+        current_path = resolve_pal_save_path(Config.path)
+        if current_path is None:
+            raise Exception(f"Path {Config.path} not exist.")
     except:
         pal_local_path = (
             Path(os.environ.get("LOCALAPPDATA", "/")) / "Pal" / "Saved" / "SaveGames"
         )
-        if pal_local_path.exists():
-            current_path = pal_local_path
-        else:
-            current_path = PROGRAM_PATH
+        steam_server_path = Path(r"C:\steamcmd\steamapps\common\PalServer\Pal\Saved\SaveGames")
+        candidates = [
+            resolve_pal_save_path(pal_local_path),
+            resolve_pal_save_path(steam_server_path),
+            resolve_pal_save_path(Path(os.environ.get("PROGRAMDATA", "/")) / "Pal" / "Saved" / "SaveGames"),
+        ]
+        current_path = next((candidate for candidate in candidates if candidate is not None), PROGRAM_PATH)
 
     old_path = Config.path
     Config.path = str(current_path)
@@ -217,8 +224,8 @@ def get_path():
 @save_blueprint.route("path", methods=["POST"])
 @jwt_required()
 def update_path():
-    path = Path(request.json.get("path")).resolve()
-    if not path.exists():
+    path = resolve_pal_save_path(request.json.get("path"))
+    if path is None or not path.exists():
         return reply(1, msg="Path Not Found")
 
     old_path = Config.path
