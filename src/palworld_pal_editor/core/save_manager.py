@@ -117,6 +117,7 @@ MAIN_SKIP_PROPERTIES[".worldSaveData.SupplySaveData"] = (skip_decode, skip_encod
 
 MAIN_SKIP_PROPERTIES[".worldSaveData.RandomizerSaveData"] = (skip_decode, skip_encode)
 MAIN_SKIP_PROPERTIES[".worldSaveData.GuildExtraSaveDataMap"] = (skip_decode, skip_encode)
+MAIN_SKIP_PROPERTIES[".worldSaveData.GroupSaveDataMap"] = (skip_decode, skip_encode)
 
 
 PLAYER_SKIP_PROPERTIES = copy.deepcopy(PALWORLD_CUSTOM_PROPERTIES)
@@ -195,20 +196,20 @@ class SaveManager:
             try:
                 self.group_data = GroupData(self.gvas_file)
             except Exception as e:
-                LOGGER.error(f"Error parsing group data: {e}")
-                return None
+                LOGGER.warning(f"Error parsing group data: {e}; continuing without group data")
+                self.group_data = None
             
             try:
                 self.camp_data = BaseCampData(self.gvas_file)
             except Exception as e:
-                LOGGER.error(f"Error parsing base camp data: {e}")
-                return None
+                LOGGER.warning(f"Error parsing base camp data: {e}; continuing without base camp data")
+                self.camp_data = None
             
             try:
                 self.container_data = ContainerData(self.gvas_file)
             except Exception as e:
-                LOGGER.error(f"Error parsing container data: {e}")
-                return None
+                LOGGER.warning(f"Error parsing container data: {e}; continuing without container data")
+                self.container_data = None
 
             try:
                 self._entities_list = self.gvas_file.properties["worldSaveData"]["value"]["CharacterSaveParameterMap"]["value"]
@@ -336,11 +337,17 @@ class SaveManager:
                         LOGGER.error(f"Duplicated player found: \n\t{self.player_mapping[uid_str]}, skipping...")
                         continue
                     
-                    group_id = self.group_data.get_player_group_id(uid_str)
+                    group_id = (
+                        self.group_data.get_player_group_id(uid_str)
+                        if self.group_data is not None
+                        else None
+                    )
 
                     if group_id is None:
-                        LOGGER.warning(f"Player {uid_str} has no guild id")
-                        continue
+                        LOGGER.warning(
+                            f"Player {uid_str} has no guild id, creating player without group association"
+                        )
+                        group_id = PalObjects.EMPTY_UUID
 
                     player_gvas_file, player_compress_times = self.load_player_sav(uid_str)
 
@@ -357,7 +364,11 @@ class SaveManager:
                     container_id, slot_idx = pal_entity.SlotId
                     group_id = pal_entity.group_id
                     # is_unref_pal = not self.group_data.get_group(group_id).has_pal(pal_entity.InstanceId)
-                    pal_container = self.container_data.get_container(container_id)
+                    pal_container = (
+                        self.container_data.get_container(container_id)
+                        if self.container_data is not None
+                        else None
+                    )
                     is_unref_pal = (not pal_container) or (not pal_container.has_pal(pal_entity.InstanceId))
                     if is_unref_pal:
                         LOGGER.info(f"Likely Ghost Pal: {pal_entity}")
@@ -524,16 +535,17 @@ class SaveManager:
         
         pal_instanceId = toUUID(str(uuid.uuid4()))
         group_id = player.group_id
-        group = self.group_data.get_group(group_id)
+        group = self.group_data.get_group(group_id) if self.group_data is not None else None
 
-        while pal_container.has_pal(pal_instanceId) or group.has_pal(pal_instanceId):
+        while pal_container.has_pal(pal_instanceId) or (group is not None and group.has_pal(pal_instanceId)):
             pal_instanceId = toUUID(str(uuid.uuid4()))
 
         try:
             if (slot_idx := pal_container.add_pal(pal_instanceId)) == -1:
                 return None
             container_id = pal_container.ID
-            group.add_pal(pal_instanceId)
+            if group is not None:
+                group.add_pal(pal_instanceId)
             
             if not pal_obj:
                 pal_obj = PalObjects.PalSaveParameter(pal_instanceId, player_uid, container_id, slot_idx, group_id)
